@@ -1,4 +1,9 @@
-define(['angular', 'jquery', 'underscore', 'moment'], function (angular, $, _, moment) {
+define([
+  'angular',
+  'jquery',
+  'lodash',
+  'moment'
+], function (angular, $, _, moment) {
   'use strict';
 
   var module = angular.module('kibana.filters');
@@ -11,26 +16,14 @@ define(['angular', 'jquery', 'underscore', 'moment'], function (angular, $, _, m
 
   module.filter('pinnedQuery', function(querySrv) {
     return function( items, pinned) {
-      var ret = _.filter(querySrv.ids,function(id){
-        var v = querySrv.list[id];
+      var ret = _.filter(querySrv.ids(),function(id){
+        var v = querySrv.list()[id];
         if(!_.isUndefined(v.pin) && v.pin === true && pinned === true) {
           return true;
         }
         if((_.isUndefined(v.pin) || v.pin === false) && pinned === false) {
           return true;
         }
-      });
-      return ret;
-    };
-  });
-
-  /*
-    Filter an array of objects by elasticsearch version requirements
-  */
-  module.filter('esVersion', function(esVersion) {
-    return function(items, require) {
-      var ret = _.filter(items,function(qt) {
-        return esVersion.is(qt[require]) ? true : false;
       });
       return ret;
     };
@@ -114,6 +107,14 @@ define(['angular', 'jquery', 'underscore', 'moment'], function (angular, $, _, m
       return _.isArray(text)
         ? _.map(text, urlLink)
         : urlLink(text);
+    };
+  });
+
+  module.filter('editable', function () {
+    return function (data) {
+      return _.filter(data, function (item) {
+        return item.editable !== false;
+      });
     };
   });
 

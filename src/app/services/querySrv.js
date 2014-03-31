@@ -1,6 +1,6 @@
 define([
   'angular',
-  'underscore',
+  'lodash',
   'config',
   'kbn'
 ],
@@ -9,7 +9,10 @@ function (angular, _, config, kbn) {
 
   var module = angular.module('kibana.services');
 
-  module.service('querySrv', function(dashboard, ejsResource, filterSrv, $q) {
+  module.service('querySrv', function(dashboard, ejsResource, filterSrv, esVersion, $q) {
+
+    // Save a reference to this
+    var self = this;
 
     // Create an object to hold our service state on the dashboard
     dashboard.current.services.query = dashboard.current.services.query || {};
@@ -71,7 +74,7 @@ function (angular, _, config, kbn) {
         }
       },
       regex: {
-        require:">=0.90.3",
+        require:">=0.90.12",
         icon: "icon-circle",
         resolve: function(query) {
           // Simply returns itself
@@ -123,22 +126,36 @@ function (angular, _, config, kbn) {
       }
     };
 
-    // Save a reference to this
-    var self = this;
+    self.types = [];
+    _.each(self.queryTypes,function(type,name){
+      esVersion.is(type.require).then(function(is) {
+        if(is) {
+          self.types.push(name);
+        }
+      });
+    });
+
+
+    this.list = function () {
+      return dashboard.current.services.query.list;
+    };
+
+    this.ids = function () {
+      return dashboard.current.services.query.ids;
+    };
 
     this.init = function() {
-      self.list = dashboard.current.services.query.list;
-      self.ids = dashboard.current.services.query.ids;
 
-      self.ids = dashboard.current.services.query.ids =
-        _.intersection(_.map(self.list,function(v,k){return parseInt(k,10);}),self.ids);
+      dashboard.current.services.query.ids =
+        _.intersection(_.map(dashboard.current.services.query.list,
+          function(v,k){return parseInt(k,10);}),self.ids());
 
       // Check each query object, populate its defaults
-      _.each(self.list,function(query) {
+      _.each(dashboard.current.services.query.list,function(query) {
         query = self.defaults(query);
       });
 
-      if (self.ids.length === 0) {
+      if (dashboard.current.services.query.ids.length === 0) {
         self.set({});
       }
     };
@@ -147,8 +164,8 @@ function (angular, _, config, kbn) {
     // the query at that id is updated
     this.set = function(query,id) {
       if(!_.isUndefined(id)) {
-        if(!_.isUndefined(self.list[id])) {
-          _.extend(self.list[id],query);
+        if(!_.isUndefined(dashboard.current.services.query.list[id])) {
+          _.extend(dashboard.current.services.query.list[id],query);
           return id;
         } else {
           return false;
@@ -159,8 +176,8 @@ function (angular, _, config, kbn) {
         query.color = query.color || colorAt(query.id);
         // Then it can get defaults
         query = self.defaults(query);
-        self.list[query.id] = query;
-        self.ids.push(query.id);
+        dashboard.current.services.query.list[query.id] = query;
+        dashboard.current.services.query.ids.push(query.id);
         return query.id;
       }
     };
@@ -173,10 +190,10 @@ function (angular, _, config, kbn) {
     };
 
     this.remove = function(id) {
-      if(!_.isUndefined(self.list[id])) {
-        delete self.list[id];
+      if(!_.isUndefined(dashboard.current.services.query.list[id])) {
+        delete dashboard.current.services.query.list[id];
         // This must happen on the full path also since _.without returns a copy
-        self.ids = dashboard.current.services.query.ids = _.without(self.ids,id);
+        dashboard.current.services.query.ids = _.without(dashboard.current.services.query.ids,id);
         return true;
       } else {
         return false;
@@ -213,15 +230,15 @@ function (angular, _, config, kbn) {
       switch(config.mode)
       {
       case 'all':
-        return _.pluck(_.where(self.list,{enable:true}),'id');
+        return _.pluck(_.where(dashboard.current.services.query.list,{enable:true}),'id');
       case 'pinned':
-        return _.pluck(_.where(self.list,{pin:true,enable:true}),'id');
+        return _.pluck(_.where(dashboard.current.services.query.list,{pin:true,enable:true}),'id');
       case 'unpinned':
-        return _.pluck(_.where(self.list,{pin:false,enable:true}),'id');
+        return _.pluck(_.where(dashboard.current.services.query.list,{pin:false,enable:true}),'id');
       case 'selected':
-        return _.intersection(_.pluck(_.where(self.list,{enable:true}),'id'),config.ids);
+        return _.intersection(_.pluck(_.where(dashboard.current.services.query.list,{enable:true}),'id'),config.ids);
       default:
-        return _.pluck(_.where(self.list,{enable:true}),'id');
+        return _.pluck(_.where(dashboard.current.services.query.list,{enable:true}),'id');
       }
     };
 
@@ -229,8 +246,9 @@ function (angular, _, config, kbn) {
     this.resolve = function() {
       // Find ids of all abstract queries
       // Get a list of resolvable ids, constrast with total list to get abstract ones
-      return $q.all(_.map(self.ids,function(q) {
-        return self.queryTypes[self.list[q].type].resolve(_.clone(self.list[q])).then(function(data){
+      return $q.all(_.map(dashboard.current.services.query.ids,function(q) {
+        return self.queryTypes[dashboard.current.services.query.list[q].type].resolve(
+          _.clone(dashboard.current.services.query.list[q])).then(function(data){
           return data;
         });
       })).then(function(data) {

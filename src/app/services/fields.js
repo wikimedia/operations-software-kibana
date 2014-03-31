@@ -1,6 +1,6 @@
 define([
   'angular',
-  'underscore',
+  'lodash',
   'config'
 ],
 function (angular, _, config) {
@@ -8,9 +8,13 @@ function (angular, _, config) {
 
   var module = angular.module('kibana.services');
 
-  module.service('fields', function(dashboard, $rootScope, $http, alertSrv) {
+  module.service('fields', function(dashboard, $rootScope, $http, esVersion, alertSrv, ejsResource) {
+
     // Save a reference to this
     var self = this;
+
+    var ejs = ejsResource(config.elasticsearch);
+
 
     this.list = ['_type'];
     this.indices = [];
@@ -36,40 +40,42 @@ function (angular, _, config) {
       var fields = [];
       _.each(m, function(types) {
         _.each(types, function(type) {
-          fields = _.without(_.union(fields,_.keys(type)),'_all','_source');
+          fields = _.difference(_.union(fields,_.keys(type)),
+            ['_parent','_routing','_size','_ttl','_all','_uid','_version','_boost','_source']);
         });
       });
       return fields;
     };
 
     this.map = function(indices) {
-      var request = $http({
-        url: config.elasticsearch + "/" + indices.join(',') + "/_mapping",
-        method: "GET"
-      }).error(function(data, status) {
-        if(status === 0) {
-          alertSrv.set('Error',"Could not contact Elasticsearch at "+config.elasticsearch+
-            ". Please ensure that Elasticsearch is reachable from your system." ,'error');
-        } else {
-          alertSrv.set('Error',"No index found at "+config.elasticsearch+"/" +
-            indices.join(',')+"/_mapping. Please create at least one index."  +
-            "If you're using a proxy ensure it is configured correctly.",'error');
-        }
-      });
+      var request = ejs.client.get('/' + indices.join(',') + "/_mapping",
+        undefined, undefined, function(data, status) {
+          if(status === 0) {
+            alertSrv.set('Error',"Could not contact Elasticsearch at "+ejs.config.server+
+              ". Please ensure that Elasticsearch is reachable from your system." ,'error');
+          } else {
+            alertSrv.set('Error',"No index found at "+ejs.config.server+"/" +
+              indices.join(',')+"/_mapping. Please create at least one index."  +
+              "If you're using a proxy ensure it is configured correctly.",'error');
+          }
+        });
 
       // Flatten the mapping of each index into dot notated keys.
       return request.then(function(p) {
         var mapping = {};
-        _.each(p.data, function(type,index) {
-          mapping[index] = {};
-          _.each(type, function (fields,typename) {
-            mapping[index][typename] = flatten(fields);
+        return esVersion.gte('1.0.0.RC1').then(function(version) {
+          _.each(p, function(indexMap,index) {
+            mapping[index] = {};
+            _.each((version ? indexMap.mappings : indexMap), function (typeMap,type) {
+              mapping[index][type] = flatten(typeMap);
+            });
           });
+          return mapping;
         });
-        return mapping;
       });
     };
 
+    // This should understand both the 1.0 format and the 0.90 format for mappings. Ugly.
     var flatten = function(obj,prefix) {
       var propName = (prefix) ? prefix :  '',
         dot = (prefix) ? '.':'',
@@ -86,12 +92,15 @@ function (angular, _, config) {
           for(var key in keys) {
             ret[attr+'.'+keys[key]] = obj[attr]['fields'][keys[key]];
           }
-        } else if (attr === 'properties') {
+        } else if (attr === 'properties' || attr ==='fields') {
           _.extend(ret,flatten(obj[attr], propName));
-        } else if(typeof obj[attr] === 'object'){
+        } else if(typeof obj[attr] === 'object' &&
+          (!_.isUndefined(obj[attr].type) || !_.isUndefined(obj[attr].properties))){
           _.extend(ret,flatten(obj[attr], propName + dot + attr));
         } else {
-          ret[propName] = obj;
+          if(propName !== '') {
+            ret[propName] = obj;
+          }
         }
       }
       return ret;

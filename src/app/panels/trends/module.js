@@ -1,8 +1,10 @@
 /** @scratch /panels/5
+ *
  * include::panels/trends.asciidoc[]
  */
 
 /** @scratch /panels/trends/0
+ *
  * == trends
  * Status: *Beta*
  *
@@ -14,7 +16,7 @@
 define([
   'angular',
   'app',
-  'underscore',
+  'lodash',
   'kbn'
 ],
 function (angular, app, _, kbn) {
@@ -47,6 +49,7 @@ function (angular, app, _, kbn) {
     // Set and populate defaults
     var _d = {
       /** @scratch /panels/trends/5
+       *
        * === Parameters
        *
        * ago:: A date math formatted string describing the relative time period to compare the
@@ -62,6 +65,7 @@ function (angular, app, _, kbn) {
        */
       spyable: true,
       /** @scratch /panels/trends/5
+       *
        * ==== Queries
        * queries object:: This object describes the queries to use on this panel.
        * queries.mode::: Of the queries available, which to use. Options: +all, pinned, unpinned, selected+
@@ -106,11 +110,13 @@ function (angular, app, _, kbn) {
         timeField = timeField[0];
       }
 
-      // This logic can be simplifie greatly with the new kbn.parseDate
+      // This logic can be simplified greatly with the new kbn.parseDate
       $scope.time = filterSrv.timeRange('last');
+
+
       $scope.old_time = {
-        from : new Date($scope.time.from.getTime() - kbn.interval_to_ms($scope.panel.ago)),
-        to   : new Date($scope.time.to.getTime() - kbn.interval_to_ms($scope.panel.ago))
+        from : new Date($scope.time.from.getTime() - kbn.interval_to_ms($scope.panel.ago)).valueOf(),
+        to   : new Date($scope.time.to.getTime() - kbn.interval_to_ms($scope.panel.ago)).valueOf()
       };
 
       var _segment = _.isUndefined(segment) ? 0 : segment;
@@ -124,11 +130,7 @@ function (angular, app, _, kbn) {
       _.each(queries, function(query) {
         var q = $scope.ejs.FilteredQuery(
           querySrv.toEjsObj(query),
-          filterSrv.getBoolFilter(_ids_without_time).must(
-            $scope.ejs.RangeFilter(timeField)
-            .from($scope.time.from)
-            .to($scope.time.to)
-          ));
+          filterSrv.getBoolFilter(filterSrv.ids()));
 
         request = request
           .facet($scope.ejs.QueryFacet(query.id)

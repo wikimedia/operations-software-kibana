@@ -2,11 +2,12 @@ define([
   'angular',
   'jquery',
   'kbn',
-  'underscore',
+  'lodash',
   'config',
   'moment',
   'modernizr',
-  'filesaver'
+  'filesaver',
+  'blob'
 ],
 function (angular, $, kbn, _, config, moment, Modernizr) {
   'use strict';
@@ -15,7 +16,7 @@ function (angular, $, kbn, _, config, moment, Modernizr) {
 
   module.service('dashboard', function(
     $routeParams, $http, $rootScope, $injector, $location, $timeout,
-    ejsResource, timer, kbnIndex, alertSrv
+    ejsResource, timer, kbnIndex, alertSrv, esVersion, esMinVersion
   ) {
     // A hash of defaults to use when loading a dashboard
 
@@ -65,6 +66,7 @@ function (angular, $, kbn, _, config, moment, Modernizr) {
 
     // An elasticJS client to use
     var ejs = ejsResource(config.elasticsearch);
+
     var gist_pattern = /(^\d{5,}$)|(^[a-z0-9]{10,}$)|(gist.github.com(\/*.*)\/[a-z0-9]{5,}\/*$)/;
 
     // Store a reference to this
@@ -79,7 +81,14 @@ function (angular, $, kbn, _, config, moment, Modernizr) {
       // Clear the current dashboard to prevent reloading
       self.current = {};
       self.indices = [];
-      route();
+      esVersion.isMinimum().then(function(isMinimum) {
+        if(isMinimum) {
+          route();
+        } else {
+          alertSrv.set('Upgrade Required',"Your version of Elasticsearch is too old. Kibana requires" +
+            " Elasticsearch " + esMinVersion + " or above.", "error");
+        }
+      });
     });
 
     var route = function() {
@@ -178,7 +187,7 @@ function (angular, $, kbn, _, config, moment, Modernizr) {
       _.defaults(dashboard,_dash);
       _.defaults(dashboard.index,_dash.index);
       _.defaults(dashboard.loader,_dash.loader);
-      return dashboard;
+      return _.cloneDeep(dashboard);
     };
 
     this.dash_load = function(dashboard) {
@@ -199,12 +208,14 @@ function (angular, $, kbn, _, config, moment, Modernizr) {
       // Delay this until we're sure that querySrv and filterSrv are ready
       $timeout(function() {
         // Ok, now that we've setup the current dashboard, we can inject our services
-        querySrv = $injector.get('querySrv');
-        filterSrv = $injector.get('filterSrv');
-
-        // Make sure these re-init
-        querySrv.init();
-        filterSrv.init();
+        if(!_.isUndefined(self.current.services.query)) {
+          querySrv = $injector.get('querySrv');
+          querySrv.init();
+        }
+        if(!_.isUndefined(self.current.services.filter)) {
+          filterSrv = $injector.get('filterSrv');
+          filterSrv.init();
+        }
       },0).then(function() {
         // Call refresh to calculate the indices and notify the panels that we're ready to roll
         self.refresh();
@@ -278,7 +289,7 @@ function (angular, $, kbn, _, config, moment, Modernizr) {
         location  : window.location.href.replace(window.location.hash,""),
         type      : type,
         id        : id,
-        link      : window.location.href.replace(window.location.hash,"")+"#dashboard/"+type+"/"+id,
+        link      : window.location.href.replace(window.location.hash,"")+"#dashboard/"+type+"/"+encodeURIComponent(id),
         title     : title
       };
     };
@@ -341,24 +352,25 @@ function (angular, $, kbn, _, config, moment, Modernizr) {
     };
 
     this.elasticsearch_load = function(type,id) {
-      return $http({
-        url: config.elasticsearch + "/" + config.kibana_index + "/"+type+"/"+id+'?' + new Date().getTime(),
-        method: "GET",
-        transformResponse: function(response) {
-          return renderTemplate(angular.fromJson(response)._source.dashboard, $routeParams);
-        }
-      }).error(function(data, status) {
+      var successcb = function(data) {
+        var response = renderTemplate(angular.fromJson(data)._source.dashboard, $routeParams);
+        self.dash_load(response);
+      };
+      var errorcb = function(data, status) {
         if(status === 0) {
-          alertSrv.set('Error',"Could not contact Elasticsearch at "+config.elasticsearch+
+          alertSrv.set('Error',"Could not contact Elasticsearch at "+ejs.config.server+
             ". Please ensure that Elasticsearch is reachable from your system." ,'error');
         } else {
           alertSrv.set('Error',"Could not find "+id+". If you"+
             " are using a proxy, ensure it is configured correctly",'error');
         }
         return false;
-      }).success(function(data) {
-        self.dash_load(data);
-      });
+      };
+
+      ejs.client.get(
+        "/" + config.kibana_index + "/"+type+"/"+id+'?' + new Date().getTime(),
+        null, successcb, errorcb);
+
     };
 
     this.script_load = function(file) {
